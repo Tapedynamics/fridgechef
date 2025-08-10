@@ -1,0 +1,16 @@
+# dipendenze
+node_modules/
+web/node_modules/
+backend/node_modules/
+
+# build frontend (la copia utile sta in backend/public)
+web/dist/
+
+# env
+.env
+backend/.env
+web/.env
+
+# vari
+.DS_Store
+Thumbs.db
