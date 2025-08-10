@@ -12,7 +12,10 @@ function Badge({ active, onClick, children }: any) {
   return (
     <button
       onClick={onClick}
-      className={'px-3 py-1 rounded-full text-sm border transition shadow-sm mr-2 mb-2 ' + (active ? 'bg-black text-white border-black' : 'bg-white border-gray-300 hover:bg-gray-100')}
+      className={
+        'px-3 py-1 rounded-full text-sm border transition shadow-sm mr-2 mb-2 ' +
+        (active ? 'bg-black text-white border-black' : 'bg-white border-gray-300 hover:bg-gray-100')
+      }
     >
       {children}
     </button>
@@ -29,7 +32,9 @@ function RecipeCard({ meal, onOpen }: any) {
           {meal.strArea && <span className="px-2 py-0.5 bg-gray-100 rounded-full">{meal.strArea}</span>}
           {meal.strCategory && <span className="px-2 py-0.5 bg-gray-100 rounded-full">{meal.strCategory}</span>}
         </div>
-        <button onClick={() => onOpen(meal)} className="w-full mt-2 py-2 rounded-xl bg-black text-white hover:opacity-90">Apri ricetta</button>
+        <button onClick={() => onOpen(meal)} className="w-full mt-2 py-2 rounded-xl bg-black text-white hover:opacity-90">
+          Apri ricetta
+        </button>
       </div>
     </div>
   );
@@ -48,15 +53,25 @@ export default function App() {
   const [selectedMeal, setSelectedMeal] = useState<any | null>(null);
   const [error, setError] = useState('');
 
+  // Avvia fotocamera con preferenza PORTRAIT
   const startCamera = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+      const constraints: MediaStreamConstraints = {
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1080 },
+          height: { ideal: 1920 },
+          aspectRatio: { ideal: 0.5625 } // 9/16 (portrait)
+        },
+        audio: false
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       if (videoRef.current) {
         (videoRef.current as any).srcObject = stream;
         await videoRef.current.play();
         setStreaming(true);
       }
-    } catch (e) {
+    } catch {
       setError("Impossibile accedere alla fotocamera. Concedi i permessi o usa l'upload.");
     }
   };
@@ -75,7 +90,7 @@ export default function App() {
     const canvas = canvasRef.current!;
     if (!video || !canvas) return;
     const w = video.videoWidth || 720;
-    const h = video.videoHeight || 480;
+    const h = video.videoHeight || 1280;
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext('2d')!;
@@ -96,6 +111,7 @@ export default function App() {
     setSelected((prev) => (prev.includes(ing) ? prev.filter((x) => x !== ing) : [...prev, ing]));
   };
 
+  // Rilevazione con backend (quando collegherai un vero provider)
   const detectWithServer = async () => {
     try {
       setLoadingDetect(true);
@@ -110,8 +126,70 @@ export default function App() {
       const ingredients = Array.isArray(data.ingredients) ? data.ingredients : [];
       setDetected(ingredients);
       setSelected((prev) => Array.from(new Set([...prev, ...ingredients])));
-    } catch (e) {
+    } catch {
       setError('Rilevazione non disponibile. Configura il backend /api/detect.');
+    } finally {
+      setLoadingDetect(false);
+    }
+  };
+
+  // Rilevazione ON-DEVICE (TensorFlow.js COCO-SSD)
+  const detectOnDevice = async () => {
+    try {
+      if (!photoDataUrl) {
+        setError('Prima scatta o carica una foto.');
+        return;
+      }
+      setLoadingDetect(true);
+      setError('');
+
+      const coco = await import('@tensorflow-models/coco-ssd');
+      await import('@tensorflow/tfjs');
+      const model = await coco.load({ base: 'lite_mobilenet_v2' });
+
+      const img = new Image();
+      img.src = photoDataUrl;
+      await new Promise((res, rej) => {
+        img.onload = () => res(true);
+        img.onerror = rej;
+      });
+
+      const predictions = await model.detect(img);
+      const goods = predictions.filter(p => p.score >= 0.5).map(p => p.class);
+
+      // mapping semplice classi->ingredienti
+      const MAP: Record<string, string> = {
+        banana: 'banana',
+        apple: 'apple',
+        orange: 'orange',
+        broccoli: 'broccoli',
+        carrot: 'carrot',
+        sandwich: 'bread',
+        pizza: 'pizza',
+        'hot dog': 'sausage',
+        donut: 'donut',
+        cake: 'cake',
+        bottle: 'milk', // euristica (non sempre vero)
+        bowl: 'yogurt', // euristica
+        cup: 'yogurt'   // euristica
+      };
+
+      const normalized = Array.from(
+        new Set(
+          goods.map(c => MAP[c] || c.replace(/\s+/g, '_').toLowerCase())
+        )
+      );
+
+      if (normalized.length === 0) {
+        setError('Nessun alimento riconosciuto con sufficiente sicurezza. Prova più luce o più vicino.');
+        return;
+      }
+
+      setDetected(normalized);
+      setSelected(prev => Array.from(new Set([...prev, ...normalized])));
+    } catch (e) {
+      console.error(e);
+      setError('Rilevazione on-device non disponibile in questo browser.');
     } finally {
       setLoadingDetect(false);
     }
@@ -157,7 +235,7 @@ export default function App() {
         })
       );
       setMeals(detailed);
-    } catch (e) {
+    } catch {
       setError('Impossibile caricare ricette. Riprova.');
     } finally {
       setLoadingRecipes(false);
@@ -184,14 +262,25 @@ export default function App() {
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-6">
+        {/* Fotocamera / Upload */}
         <section className="grid md:grid-cols-2 gap-6 items-start">
           <div className="bg-white rounded-2xl p-4 shadow">
             <h2 className="font-semibold text-lg mb-2">1) Scatta o carica una foto del frigo</h2>
             <div className="relative rounded-xl overflow-hidden bg-black">
-              <video ref={videoRef} className="w-full aspect-video object-cover" playsInline muted />
-              {!streaming && (<div className="absolute inset-0 flex items-center justify-center text-white/70 text-sm">Fotocamera spenta</div>)}
+              {/* verticale su mobile (9:16), orizzontale su desktop */}
+              <video
+                ref={videoRef}
+                className="w-full aspect-[9/16] md:aspect-video object-cover"
+                playsInline
+                muted
+              />
+              {!streaming && (
+                <div className="absolute inset-0 flex items-center justify-center text-white/70 text-sm">
+                  Fotocamera spenta
+                </div>
+              )}
             </div>
-            <div className="flex gap-2 mt-3">
+            <div className="flex gap-2 mt-3 flex-wrap">
               {!streaming ? (
                 <button onClick={startCamera} className="px-4 py-2 rounded-xl bg-black text-white">Apri fotocamera</button>
               ) : (
@@ -205,32 +294,61 @@ export default function App() {
               </label>
             </div>
             <canvas ref={canvasRef} className="hidden" />
-            {photoDataUrl && (<div className="mt-3"><img src={photoDataUrl} alt="Snapshot" className="rounded-xl w-full object-contain border" /></div>)}
+            {photoDataUrl && (
+              <div className="mt-3">
+                <img src={photoDataUrl} alt="Snapshot" className="rounded-xl w-full object-contain border" />
+              </div>
+            )}
           </div>
 
+          {/* Ingredienti */}
           <div className="bg-white rounded-2xl p-4 shadow">
             <h2 className="font-semibold text-lg mb-2">2) Ingredienti rilevati o selezionati</h2>
-            <p className="text-sm text-gray-600 mb-2">Puoi selezionare a mano oppure usare un detector server premendo il pulsante qui sotto.</p>
+            <p className="text-sm text-gray-600 mb-2">
+              Puoi selezionare a mano, usare il rilevamento <b>on-device</b> o quello via <b>server</b>.
+            </p>
             <div className="flex flex-wrap mb-3">
               {COMMON_INGREDIENTS.map((ing) => (
-                <Badge key={ing} active={selected.includes(ing)} onClick={() => setSelected((prev) => (prev.includes(ing) ? prev.filter((x) => x !== ing) : [...prev, ing]))}>
+                <Badge key={ing} active={selected.includes(ing)} onClick={() => toggleSelect(ing)}>
                   {ing.replace(/_/g, ' ')}
                 </Badge>
               ))}
             </div>
             <div className="flex flex-wrap gap-2">
-              <button onClick={detectWithServer} disabled={!photoDataUrl || loadingDetect} className="px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50">{loadingDetect ? 'Rilevo…' : 'Rileva con AI (server)'}</button>
-              {detected.length > 0 && (<div className="text-xs text-gray-600 self-center">Suggeriti: {detected.join(', ')}</div>)}
-              <button onClick={() => { setSelected([]); setDetected([]); }} className="px-4 py-2 rounded-xl bg-gray-100">Pulisci</button>
+              <button
+                onClick={detectOnDevice}
+                disabled={!photoDataUrl || loadingDetect}
+                className="px-4 py-2 rounded-xl bg-black/80 text-white disabled:opacity-50"
+              >
+                {loadingDetect ? 'Rilevo…' : 'Rileva (sul dispositivo)'}
+              </button>
+              <button
+                onClick={detectWithServer}
+                disabled={!photoDataUrl || loadingDetect}
+                className="px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50"
+              >
+                {loadingDetect ? 'Rilevo…' : 'Rileva con AI (server)'}
+              </button>
+              {detected.length > 0 && (
+                <div className="text-xs text-gray-600 self-center">Suggeriti: {detected.join(', ')}</div>
+              )}
+              <button onClick={() => { setSelected([]); setDetected([]); }} className="px-4 py-2 rounded-xl bg-gray-100">
+                Pulisci
+              </button>
             </div>
           </div>
         </section>
 
+        {/* Ricette */}
         <section className="mt-6 bg-white rounded-2xl p-4 shadow">
           <h2 className="font-semibold text-lg mb-2">3) Ricette suggerite</h2>
-          <p className="text-sm text-gray-600 mb-3">Seleziona almeno un ingrediente e premi "Cerca ricette". Usiamo TheMealDB e combiniamo più ingredienti con intersezione client‑side.</p>
+          <p className="text-sm text-gray-600 mb-3">
+            Seleziona almeno un ingrediente e premi "Cerca ricette". Usiamo TheMealDB e combiniamo più ingredienti con intersezione client-side.
+          </p>
           <div className="flex gap-2 mb-4">
-            <button onClick={fetchRecipes} disabled={loadingRecipes || selected.length === 0} className="px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50">{loadingRecipes ? 'Cerco…' : 'Cerca ricette'}</button>
+            <button onClick={fetchRecipes} disabled={loadingRecipes || selected.length === 0} className="px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50">
+              {loadingRecipes ? 'Cerco…' : 'Cerca ricette'}
+            </button>
           </div>
 
           {error && (<div className="mb-4 p-3 rounded-lg border border-red-300 bg-red-50 text-red-800 text-sm">{error}</div>)}
@@ -242,6 +360,7 @@ export default function App() {
           ) : (!loadingRecipes && (<div className="text-sm text-gray-600">Nessuna ricetta ancora. Seleziona ingredienti e avvia la ricerca.</div>))}
         </section>
 
+        {/* Drawer ricetta */}
         {selectedMeal && (
           <div className="fixed inset-0 bg-black/40 z-50 flex items-end md:items-center justify-center" onClick={() => setSelectedMeal(null)}>
             <div className="bg-white w-full md:max-w-2xl rounded-t-2xl md:rounded-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
